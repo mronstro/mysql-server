@@ -1,5 +1,6 @@
 /*
    Copyright (c) 2010, 2024, Oracle and/or its affiliates.
+   Copyright (c) 2022, 2023, Hopsworks and/or its affiliates.
 
    This program is free software; you can redistribute it and/or modify
    it under the terms of the GNU General Public License, version 2.0,
@@ -356,7 +357,9 @@ public class QueryDomainTypeImpl<T> implements QueryDomainType<T> {
      * @return the number of instances deleted
      * @throws ClusterJUserException if not all parameters are bound
      */
-    public int deletePersistentAll(QueryExecutionContext context, long limit) {
+    public int deletePersistentAll(QueryExecutionContext context,
+                                   long skip,
+                                   long limit) {
         SessionSPI session = context.getSession();
         // calculate what kind of scan is needed
         // if no where clause, scan the entire table
@@ -366,9 +369,10 @@ public class QueryDomainTypeImpl<T> implements QueryDomainType<T> {
         context.setExplain(explain);
         int result = 0;
         int errorCode = 0;
-        if(limit < 1)
-            return result;
         Index storeIndex;
+        if (skip == Long.MAX_VALUE || limit <= 0) {
+            return result;
+        }
         session.startAutoTransaction();
         Operation op = null;
         try {
@@ -421,7 +425,10 @@ public class QueryDomainTypeImpl<T> implements QueryDomainType<T> {
                     // set additional filter conditions
                     where.filterCmpValue(context, (IndexScanOperation)op);
                     // delete results of the scan; don't abort if no row found
-                    result = session.deletePersistentAll((IndexScanOperation)op, false, limit);
+                    result = session.deletePersistentAll((IndexScanOperation)op,
+                                                         false,
+                                                         skip,
+                                                         limit);
                     break;
                 }
 
@@ -436,7 +443,10 @@ public class QueryDomainTypeImpl<T> implements QueryDomainType<T> {
                         where.filterCmpValue(context, (ScanOperation)op);
                     }
                     // delete results of the scan; don't abort if no row found
-                    result = session.deletePersistentAll((ScanOperation)op, false, limit);
+                    result = session.deletePersistentAll((ScanOperation)op,
+                                                          false,
+                                                          skip,
+                                                          limit);
                     break;
                 }
 

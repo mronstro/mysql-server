@@ -1,5 +1,6 @@
 /*
    Copyright (c) 2009, 2024, Oracle and/or its affiliates.
+   Copyright (c) 2021, 2023, Hopsworks and/or its affiliates.
 
    This program is free software; you can redistribute it and/or modify
    it under the terms of the GNU General Public License, version 2.0,
@@ -150,6 +151,7 @@ public abstract class AbstractClusterJTest extends TestCase {
             sessionFactory = ClusterJHelper.getSessionFactory(modifiedProperties);
             existingSessionFactories.add(sessionFactory);
             loadSchema();
+            createSession();
         }
     }
 
@@ -181,6 +183,14 @@ public abstract class AbstractClusterJTest extends TestCase {
         }
         session = sessionFactory.getSession();
         tx = session.currentTransaction();
+    }
+
+    public void closeSession() {
+        if (session != null && !session.isClosed()) {
+            session.dropInstanceCache();
+            session.close();
+            session = null;
+        }
     }
 
     protected void dumpSystemProperties() {
@@ -509,6 +519,7 @@ public abstract class AbstractClusterJTest extends TestCase {
         props.put("useSSL", "false");
         props.put("user", jdbcUsername);
         props.put("password",jdbcPassword);
+        props.put("allowPublicKeyRetrieval", "true");
     }
 
     /** Load the schema for tests */

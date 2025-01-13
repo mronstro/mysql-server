@@ -1,5 +1,6 @@
 /*
  *  Copyright (c) 2010, 2024, Oracle and/or its affiliates.
+ *  Copyright (c) 2020, 2023, Hopsworks, and/or its affiliates.
  *
  *  This program is free software; you can redistribute it and/or modify
  *  it under the terms of the GNU General Public License, version 2.0,
@@ -34,10 +35,16 @@ import java.util.Map;
 public interface SessionFactory {
 
     /** Create a Session to use with the cluster, using all the
-     * properties of the SessionFactory.
+     * properties of the SessionFactory. The default database is used.
      * @return the session
      */
     Session getSession();
+
+    /** Create a Session to use with the cluster, using all the
+     * properties of the SessionFactory with a new database name.
+     * @return the session
+     */
+    Session getSession(String db);
 
     /** Create a session to use with the cluster, overriding some properties.
      * Properties PROPERTY_CLUSTER_CONNECTSTRING, PROPERTY_CLUSTER_DATABASE,
@@ -153,4 +160,9 @@ public interface SessionFactory {
      */
     public int getRecvThreadActivationThreshold();
 
+    /**
+     * Drop the session cache.
+     * Added by Logical Clocks.
+     */
+    public void dropSessionCache();
 }

@@ -1,5 +1,6 @@
 /*
  *  Copyright (c) 2010, 2024, Oracle and/or its affiliates.
+ *  Copyright (c) 2020, 2023, Hopsworks and/or its affiliates.
  *
  *  This program is free software; you can redistribute it and/or modify
  *  it under the terms of the GNU General Public License, version 2.0,
@@ -38,6 +39,7 @@ import com.mysql.clusterj.core.store.Table;
 import com.mysql.clusterj.core.util.I18NHelper;
 import com.mysql.clusterj.core.util.Logger;
 import com.mysql.clusterj.core.util.LoggerFactoryService;
+import com.mysql.ndbjtie.ndbapi.NdbErrorConst;
 
 /**
  *
@@ -56,16 +58,34 @@ class DictionaryImpl implements com.mysql.clusterj.core.store.Dictionary {
 
     private ClusterConnectionImpl clusterConnection;
 
-    public DictionaryImpl(Dictionary ndbDictionary, ClusterConnectionImpl clusterConnection) {
+    private String databaseName;
+
+    private boolean defaultDatabase;
+
+    public DictionaryImpl(Dictionary ndbDictionary,
+                          ClusterConnectionImpl clusterConnection,
+                          String databaseName,
+                          boolean defaultDatabase) {
         this.ndbDictionary = ndbDictionary;
         this.clusterConnection = clusterConnection;
+        this.databaseName = databaseName;
+        this.defaultDatabase = defaultDatabase;
     }
 
     public Table getTable(String tableName) {
         TableConst ndbTable = ndbDictionary.getTable(tableName);
         if (ndbTable == null) {
+            NdbErrorConst error = ndbDictionary.getNdbError();
+            if (error.code() != 0) {
+                Utility.throwError(null, error, tableName);
+            }
+
             // try the lower case table name
             ndbTable = ndbDictionary.getTable(tableName.toLowerCase());
+            error = ndbDictionary.getNdbError();
+            if (error.code() != 0) {
+                Utility.throwError(null, error, tableName);
+            }
         }
         if (ndbTable == null) {
             return null;
@@ -141,7 +161,7 @@ class DictionaryImpl implements com.mysql.clusterj.core.store.Dictionary {
         // remove the cached table from this dictionary
         ndbDictionary.removeCachedTable(tableName);
         // also remove the cached NdbRecord associated with this table
-        clusterConnection.unloadSchema(tableName);
+        clusterConnection.unloadSchema(databaseName, tableName, defaultDatabase);
     }
 
     public Dictionary getNdbDictionary() {

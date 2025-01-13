@@ -1,5 +1,6 @@
 /*
    Copyright (c) 2010, 2024, Oracle and/or its affiliates.
+   Copyright (c) 2021, 2023, Hopsworks and/or its affiliates.
 
    This program is free software; you can redistribute it and/or modify
    it under the terms of the GNU General Public License, version 2.0,
@@ -356,8 +357,12 @@ public abstract class AbstractDomainTypeHandlerImpl<T> implements DomainTypeHand
         try {
             result = dictionary.getTable(tableName);
         } catch (Exception ex) {
-            throw new ClusterJException(
-                    local.message("ERR_Get_NdbTable", name, tableName), ex);
+            if (!(ex instanceof ClusterJException)) {
+                throw new ClusterJException(
+                  local.message("ERR_Get_NdbTable", name, tableName), ex);
+            } else {
+                throw ex;
+            }
         }
         return result;
     }

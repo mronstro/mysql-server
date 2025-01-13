@@ -1,5 +1,6 @@
 /*
  *  Copyright (c) 2011, 2024, Oracle and/or its affiliates.
+ *  Copyright (c) 2022, 2023, Hopsworks and/or its affiliates.
  *
  *  This program is free software; you can redistribute it and/or modify
  *  it under the terms of the GNU General Public License, version 2.0,
@@ -48,6 +49,7 @@ public class ConnectionPoolTest extends AbstractClusterJTest {
     public void localSetUp() {
         loadProperties();
         // close the existing session factory because it uses one of the cluster connection (api) nodes
+        closeSession();
         closeAllExistingSessionFactories();
     }
 

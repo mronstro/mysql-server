@@ -1,5 +1,6 @@
 /*
  *  Copyright (c) 2009, 2024, Oracle and/or its affiliates.
+ *  Copyright (c) 2020, 2023, Hopsworks, and/or its affiliates.
  *
  *  This program is free software; you can redistribute it and/or modify
  *  it under the terms of the GNU General Public License, version 2.0,
@@ -119,6 +120,9 @@ class ClusterTransactionImpl implements ClusterTransaction {
 
     private List<Operation> operationsToCheck = new ArrayList<Operation>();
 
+    private boolean isPartitionKeySet = false;
+    private final boolean hops_pk_fix = true;
+
     public ClusterTransactionImpl(ClusterConnectionImpl clusterConnectionImpl,
             DbImpl db, Dictionary ndbDictionary) {
         this.db = db;
@@ -135,6 +139,7 @@ class ClusterTransactionImpl implements ClusterTransaction {
         if (ndbTransaction != null) {
             ndbTransaction.close();
             ndbTransaction = null;
+            isPartitionKeySet = false;
         }
     }
 
@@ -555,6 +560,8 @@ class ClusterTransactionImpl implements ClusterTransaction {
     private void performPostExecuteCallbacks() {
         // check completed operations
         StringBuilder exceptionMessages = new StringBuilder();
+        ClusterJDatastoreException firstDSException = null;
+        int noOfExceptions = 0;
         for (Operation op: operationsToCheck) {
             int code = op.getErrorCode();
             int classification = op.getClassification();
@@ -569,6 +576,10 @@ class ClusterTransactionImpl implements ClusterTransaction {
                         op.toString());
                 exceptionMessages.append(message);
                 exceptionMessages.append('\n');
+                if (firstDSException == null){
+                    firstDSException = new ClusterJDatastoreException(message, code, mysqlCode, status, classification);
+                }
+                noOfExceptions++;
             }
         }
         operationsToCheck.clear();
@@ -581,12 +592,21 @@ class ClusterTransactionImpl implements ClusterTransaction {
                     t.printStackTrace();
                     exceptionMessages.append(t.getMessage());
                     exceptionMessages.append('\n');
+                    noOfExceptions++;
                 }
             }
         } finally {
             clearPostExecuteCallbacks();
         }
-        if (exceptionMessages.length() > 0) {
+
+        if (firstDSException != null) {
+          // rewrite the message if needed
+          if (noOfExceptions > 1) {
+            firstDSException = new ClusterJDatastoreException(exceptionMessages.toString(), firstDSException.getCode(),
+                firstDSException.getMysqlCode(), firstDSException.getStatus(), firstDSException.getClassification());
+          }
+          throw firstDSException;
+        } else if (exceptionMessages.length() > 0) {
             throw new ClusterJDatastoreException(exceptionMessages.toString());
         }
     }
@@ -641,7 +661,14 @@ class ClusterTransactionImpl implements ClusterTransaction {
             throw new ClusterJFatalInternalException(
                     local.message("ERR_Partition_Key_Null"));
         }
-        this.partitionKey = (PartitionKeyImpl)partitionKey;
+        if (hops_pk_fix) {
+            if (!isPartitionKeySet) {
+                this.partitionKey = (PartitionKeyImpl)partitionKey;
+                isPartitionKeySet = true;
+            }
+        } else {
+            this.partitionKey = (PartitionKeyImpl)partitionKey;
+        }
     }
 
     public void setLockMode(LockMode lockmode) {
@@ -677,8 +704,8 @@ class ClusterTransactionImpl implements ClusterTransaction {
      * @param storeTable the table
      * @return
      */
-    protected NdbRecordImpl getCachedNdbRecordImpl(Table storeTable) {
-        return clusterConnectionImpl.getCachedNdbRecordImpl(storeTable);
+    protected NdbRecordImpl getCachedNdbRecordImpl(DbImpl db, Table storeTable) {
+        return clusterConnectionImpl.getCachedNdbRecordImpl(db, storeTable);
     }
 
     /** Get the cached NdbRecordImpl for this index and table. The NdbRecordImpl is cached in the
@@ -687,8 +714,8 @@ class ClusterTransactionImpl implements ClusterTransaction {
      * @param storeIndex the index
      * @return
      */
-    protected NdbRecordImpl getCachedNdbRecordImpl(Index storeIndex, Table storeTable) {
-        return clusterConnectionImpl.getCachedNdbRecordImpl(storeIndex, storeTable);
+    protected NdbRecordImpl getCachedNdbRecordImpl(DbImpl db, Index storeIndex, Table storeTable) {
+        return clusterConnectionImpl.getCachedNdbRecordImpl(db, storeIndex, storeTable);
     }
 
     /** 

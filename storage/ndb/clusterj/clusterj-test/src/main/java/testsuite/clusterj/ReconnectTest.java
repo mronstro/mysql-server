@@ -1,5 +1,6 @@
 /*
    Copyright (c) 2010, 2024, Oracle and/or its affiliates.
+   Copyright (c) 2022, 2023, Hopsworks and/or its affiliates.
 
    This program is free software; you can redistribute it and/or modify
    it under the terms of the GNU General Public License, version 2.0,
@@ -245,7 +246,7 @@ public class ReconnectTest extends AbstractClusterJModelTest {
                         actualTotal += orderLine.getTotalValue();
                     }
                     errorIfNotEqual("For order " + orderId + ", order value does not equal sum of order line values."
-                            + " orderLines: \n" + messages.toString(),
+                            + " orderLines:\n" + messages.toString(),
                             expectedTotal, actualTotal);
                 }
                 done = true;

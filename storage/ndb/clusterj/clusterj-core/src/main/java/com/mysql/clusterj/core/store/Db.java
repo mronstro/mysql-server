@@ -1,5 +1,6 @@
 /*
    Copyright (c) 2010, 2024, Oracle and/or its affiliates.
+   Copyright (c) 2020, 2023, Hopsworks and/or its affiliates.
 
    This program is free software; you can redistribute it and/or modify
    it under the terms of the GNU General Public License, version 2.0,
@@ -41,4 +42,8 @@ public interface Db {
     public boolean isRetriable(ClusterJDatastoreException ex);
 
     public void assertNotClosed(String where);
+
+    public String getName();
+
+    public boolean isDefaultDatabase();
 }

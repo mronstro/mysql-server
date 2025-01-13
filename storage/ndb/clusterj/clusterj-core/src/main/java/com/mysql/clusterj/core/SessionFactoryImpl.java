@@ -1,5 +1,6 @@
 /*
    Copyright (c) 2010, 2024, Oracle and/or its affiliates.
+   Copyright (c) 2020, 2023, Hopsworks and/or its affiliates.
 
    This program is free software; you can redistribute it and/or modify
    it under the terms of the GNU General Public License, version 2.0,
@@ -25,16 +26,7 @@
 
 package com.mysql.clusterj.core;
 
-import com.mysql.clusterj.ClusterJDatastoreException;
-import com.mysql.clusterj.ClusterJException;
-import com.mysql.clusterj.ClusterJFatalException;
-import com.mysql.clusterj.ClusterJFatalInternalException;
-import com.mysql.clusterj.ClusterJFatalUserException;
-import com.mysql.clusterj.ClusterJHelper;
-import com.mysql.clusterj.ClusterJUserException;
-import com.mysql.clusterj.Constants;
-import com.mysql.clusterj.Session;
-import com.mysql.clusterj.SessionFactory;
+import com.mysql.clusterj.*;
 import com.mysql.clusterj.core.spi.DomainTypeHandler;
 import com.mysql.clusterj.core.spi.DomainTypeHandlerFactory;
 import com.mysql.clusterj.core.spi.ValueHandlerFactory;
@@ -92,7 +84,9 @@ public class SessionFactoryImpl implements SessionFactory, Constants {
     int[] CLUSTER_BYTE_BUFFER_POOL_SIZES;
     int CLUSTER_RECONNECT_TIMEOUT;
     int CLUSTER_RECV_THREAD_ACTIVATION_THRESHOLD;
-
+    int CLUSTER_WARMUP_CACHED_SESSIONS;
+    int CLUSTER_MAX_CACHED_SESSIONS;
+    int CLUSTER_MAX_CACHED_INSTANCES;
 
     /** Node ids obtained from the property PROPERTY_CONNECTION_POOL_NODEIDS */
     List<Integer> nodeIds = new ArrayList<Integer>();
@@ -122,6 +116,10 @@ public class SessionFactoryImpl implements SessionFactory, Constants {
 
     /** Cluster connections that together can be used to manage sessions */
     private List<ClusterConnection> pooledConnections = new ArrayList<ClusterConnection>();
+
+
+    /** Sessions Cache **/
+    private final SessionCache sessionCache;
 
     /** Get a cluster connection service.
      * @return the cluster connection service
@@ -220,6 +218,30 @@ public class SessionFactoryImpl implements SessionFactory, Constants {
                 Constants.DEFAULT_PROPERTY_CLUSTER_CONNECT_AUTO_INCREMENT_START);
         CLUSTER_CONNECTION_SERVICE = getStringProperty(props, PROPERTY_CLUSTER_CONNECTION_SERVICE);
         CLUSTER_BYTE_BUFFER_POOL_SIZES = getByteBufferPoolSizes(props);
+
+        CLUSTER_MAX_CACHED_INSTANCES = getIntProperty(props, PROPERTY_CLUSTER_MAX_CACHED_INSTANCES,
+                Constants.DEFAULT_PROPERTY_CLUSTER_MAX_CACHED_INSTANCES);
+        if (CLUSTER_MAX_CACHED_INSTANCES < 0) {
+            CLUSTER_MAX_CACHED_INSTANCES = DEFAULT_PROPERTY_CLUSTER_MAX_CACHED_INSTANCES;
+        }
+
+        CLUSTER_WARMUP_CACHED_SESSIONS = getIntProperty(props, PROPERTY_CLUSTER_WARMUP_CACHED_SESSIONS,
+                Constants.DEFAULT_PROPERTY_CLUSTER_WARMUP_CACHED_SESSIONS);
+        if (CLUSTER_WARMUP_CACHED_SESSIONS < 0) {
+            CLUSTER_WARMUP_CACHED_SESSIONS = DEFAULT_PROPERTY_CLUSTER_WARMUP_CACHED_SESSIONS;
+        }
+
+        CLUSTER_MAX_CACHED_SESSIONS = getIntProperty(props, PROPERTY_CLUSTER_MAX_CACHED_SESSIONS,
+                Constants.DEFAULT_PROPERTY_CLUSTER_MAX_CACHED_SESSIONS);
+        if (CLUSTER_MAX_CACHED_SESSIONS < 0) {
+            CLUSTER_MAX_CACHED_SESSIONS = DEFAULT_PROPERTY_CLUSTER_MAX_CACHED_SESSIONS;
+        }
+
+        if (CLUSTER_WARMUP_CACHED_SESSIONS > CLUSTER_MAX_CACHED_SESSIONS) {
+            CLUSTER_WARMUP_CACHED_SESSIONS = CLUSTER_MAX_CACHED_SESSIONS;
+        }
+        sessionCache = new SessionCache(CLUSTER_MAX_CACHED_SESSIONS);
+
         CLUSTER_RECV_THREAD_ACTIVATION_THRESHOLD = getIntProperty(props, PROPERTY_CONNECTION_POOL_RECV_THREAD_ACTIVATION_THRESHOLD,
                 Constants.DEFAULT_PROPERTY_CONNECTION_POOL_RECV_THREAD_ACTIVATION_THRESHOLD);
         if (CLUSTER_RECV_THREAD_ACTIVATION_THRESHOLD < 0) {
@@ -229,10 +251,12 @@ public class SessionFactoryImpl implements SessionFactory, Constants {
             logger.warn(msg);
             throw new ClusterJFatalUserException(msg);
         }
+
         createClusterConnectionPool();
         // now get a Session for each connection in the pool and
         // complete a transaction to make sure that each connection is ready
         verifyConnectionPool();
+        warmupSessionCache();
         state = State.Open;
     }
 
@@ -337,7 +361,7 @@ public class SessionFactoryImpl implements SessionFactory, Constants {
         try {
             List<Session> sessions = new ArrayList<Session>(pooledConnections.size());
             for (int i = 0; i < pooledConnections.size(); ++i) {
-                sessions.add(getSession(null, true));
+                sessions.add(getSession(null, null, true));
             }
             sessionCounts = getConnectionPoolSessionCounts();
             for (Session session: sessions) {
@@ -426,16 +450,50 @@ public class SessionFactoryImpl implements SessionFactory, Constants {
         return result;
     }
 
+    public boolean isSessionCacheEnabled() {
+        return CLUSTER_MAX_CACHED_SESSIONS  != 0;
+    }
+
+    private void warmupSessionCache() {
+        for (int i = 0; i < CLUSTER_WARMUP_CACHED_SESSIONS; i++) {
+            Session session = getSession(null, null, true);
+            storeCachedSession(session, CLUSTER_DATABASE);
+        }
+    }
+
+    /**
+     * Get a session cached for reuse.
+     * This improves performance by avoiding having to recreate the Session object
+     * in applications that frequently create and close Session objects.
+     *
+     * This method is called with synchronized, so already protected.
+     *
+     * The getCachedSession without parameters use the default database. This is
+     * handled as a special case for performance reasons. However the number of
+     * objects in the cache is still global over all databases.
+     */
+    private Session getCachedSession(String db) {
+        return getSessionCache().getCachedSession(db);
+    }
+
+    public void storeCachedSession(Session session, String db) {
+        getSessionCache().storeCachedSession(session, db);
+    }
+
     /** Get a session to use with the cluster.
      *
      * @return the session
      */
     public Session getSession() {
-        return getSession(null, false);
+        return getSession(CLUSTER_DATABASE, null, false);
     }
 
     public Session getSession(Map properties) {
-        return getSession(null, false);
+        return getSession(CLUSTER_DATABASE, null, false);
+    }
+
+    public Session getSession(String database) {
+        return getSession(database, null, false);
     }
 
     /** Get a session to use with the cluster, overriding some properties.
@@ -444,19 +502,35 @@ public class SessionFactoryImpl implements SessionFactory, Constants {
      * @param properties overriding some properties for this session
      * @return the session
      */
-    public Session getSession(Map properties, boolean internal) {
+    public Session getSession(String databaseName, Map properties, boolean internal) {
         try {
             Db db = null;
             synchronized(this) {
                 if (!(State.Open.equals(state)) && !internal) {
+                    reconnect();  // start reconnection thread if it is not already running
                     throw new ClusterJUserException(local.message("ERR_SessionFactory_not_open"));
+                }
+                if (!internal) {
+                    if (databaseName != null) {
+                         Session session = getCachedSession(databaseName);
+                         if (session != null) {
+                             return session;
+                         }
+                    }
+                }
+                boolean default_database = false;
+                if (databaseName == null) {
+                    databaseName = CLUSTER_DATABASE;
+                    default_database = true;
                 }
                 ClusterConnection clusterConnection = getClusterConnectionFromPool();
                 checkConnection(clusterConnection);
-                db = clusterConnection.createDb(CLUSTER_DATABASE, CLUSTER_MAX_TRANSACTIONS);
+                db = clusterConnection.createDb(databaseName,
+                                                default_database,
+                                                CLUSTER_MAX_TRANSACTIONS);
             }
             Dictionary dictionary = db.getDictionary();
-            return new SessionImpl(this, properties, db, dictionary);
+            return new SessionImpl(this, properties, db, dictionary, CLUSTER_MAX_CACHED_INSTANCES);
         } catch (ClusterJException ex) {
             throw ex;
         } catch (Exception ex) {
@@ -689,6 +763,7 @@ public class SessionFactoryImpl implements SessionFactory, Constants {
     }
 
     public synchronized void close() {
+        dropSessionCache();
         // close all of the cluster connections
         for (ClusterConnection clusterConnection: pooledConnections) {
             clusterConnection.close();
@@ -717,25 +792,82 @@ public class SessionFactoryImpl implements SessionFactory, Constants {
         return result;
     }
 
-    public String unloadSchema(Class<?> cls, Dictionary dictionary) {
+    public String unloadSchema(Class<?> cls,
+                               Dictionary dictionary,
+                               String databaseName,
+                               boolean defaultDatabase) {
         synchronized(typeToHandlerMap) {
             String tableName = null;
             DomainTypeHandler<?> domainTypeHandler = typeToHandlerMap.remove(cls);
             if (domainTypeHandler != null) {
                 // remove the ndb dictionary cached table definition
                 tableName = domainTypeHandler.getTableName();
-                if (tableName != null) {
-                    if (logger.isDebugEnabled())logger.debug("Removing dictionary entry for table " + tableName
-                            + " for class " + cls.getName());
-                    dictionary.removeCachedTable(tableName);
-                    for (ClusterConnection clusterConnection: pooledConnections) {
-                        clusterConnection.unloadSchema(tableName);
-                    }
-                }
+                unloadSchemaInternal(cls, dictionary, tableName, databaseName, defaultDatabase);
+            } else {
+                /*
+                When a table is deleted and recreated with different schema then we need to unload
+                the schema otherwise we will get schema version mismatch errors. However, the
+                typeToHandlerMap uses Class as keys. The Dynamic class that will represent the
+                new table will not match with any key in typeToHandlerMap and unloadSchema
+                will not do anything.
+
+                If we do not find the user key in the typeToHandlerMap then we iterate over
+                the keys in the typeToHandlersMap and check if the table name matches
+                with the user supplied class. If a match is found then we unload that table and
+                return.
+                 */
+                newTableUnloadSchemaInternal(cls, dictionary, databaseName, defaultDatabase);
             }
             return tableName;
         }
     }
+
+    private void unloadSchemaInternal(Class<?> cls, Dictionary dictionary, String tableName,
+                                      String databaseName, boolean defaultDatabase) {
+        if (tableName != null) {
+            if (logger.isDebugEnabled()) logger.debug("Removing dictionary entry for table "
+                    + "db:" + databaseName + " " + tableName
+                    + " for class " + cls.getName());
+            dictionary.removeCachedTable(tableName);
+            for (ClusterConnection clusterConnection : pooledConnections) {
+                clusterConnection.unloadSchema(databaseName, tableName, defaultDatabase);
+            }
+            getSessionCache().removeCachedSessions(databaseName);
+        }
+    }
+
+    private void newTableUnloadSchemaInternal(Class<?> cls, Dictionary dictionary,
+                                              String databaseName, boolean defaultDatabase) {
+        String userTable = getTableFromClass(cls);
+        if (userTable != null) {
+            for (Class<?> c : typeToHandlerMap.keySet()) {
+                String keyTable = getTableFromClass(c);
+                if (keyTable != null) {
+                    if (userTable.compareTo(keyTable) == 0) {
+                        DomainTypeHandler<?> domainTypeHandler = typeToHandlerMap.remove(c);
+                        if (domainTypeHandler != null) {
+                            // remove the ndb dictionary cached table definition
+                            String tableName = domainTypeHandler.getTableName();
+                            unloadSchemaInternal(cls, dictionary, tableName, databaseName, defaultDatabase);
+                            return;
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    private String getTableFromClass(Class<?> cls) {
+        try {
+            DynamicObject test = (DynamicObject) cls.newInstance();
+            return test.table();
+        } catch (InstantiationException | IllegalAccessException e) {
+            logger.warn(local.message("ERR_Create_Instance", cls.toString()));
+            return null;
+        }
+    }
+
+
     protected ThreadGroup threadGroup = new ThreadGroup("Reconnect");
 
     protected Thread reconnectThread;
@@ -781,6 +913,7 @@ public class SessionFactoryImpl implements SessionFactory, Constants {
      */
     public void reconnect(int timeout) {
         logger.warn(local.message("WARN_Reconnect", getConnectionPoolSessionCounts().toString()));
+        dropSessionCache();
         synchronized(this) {
             // if already restarting, do nothing
             if (State.Reconnecting.equals(state)) {
@@ -803,6 +936,10 @@ public class SessionFactoryImpl implements SessionFactory, Constants {
             reconnectThread.start();
             logger.warn(local.message("WARN_Reconnect_started"));
         }
+    }
+
+    public void dropSessionCache() {
+        getSessionCache().dropSessionCache();
     }
 
     protected static int countSessions(SessionFactoryImpl factory) {
@@ -856,7 +993,13 @@ public class SessionFactoryImpl implements SessionFactory, Constants {
             factory.proxyInterfacesToDomainClassMap.clear();
 
             logger.warn(local.message("WARN_Reconnect_creating"));
-            factory.createClusterConnectionPool();
+            try {
+                factory.createClusterConnectionPool();
+            } catch(Exception e){ // unable to connect to cluster.
+                factory.state = State.Closed;
+                throw e;
+            }
+
             factory.verifyConnectionPool();
             logger.warn(local.message("WARN_Reconnect_reopening"));
             synchronized(factory) {
@@ -927,5 +1070,13 @@ public class SessionFactoryImpl implements SessionFactory, Constants {
 
     public int getRecvThreadActivationThreshold() {
         return CLUSTER_RECV_THREAD_ACTIVATION_THRESHOLD;
+    }
+
+    /**
+     * Visible only for unit tests
+     * @return session cache
+     */
+    public SessionCache getSessionCache(){
+        return sessionCache;
     }
 }

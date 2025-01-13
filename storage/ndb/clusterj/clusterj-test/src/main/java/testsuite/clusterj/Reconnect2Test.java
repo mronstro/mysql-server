@@ -1,5 +1,6 @@
 /*
    Copyright (c) 2019, 2024, Oracle and/or its affiliates.
+   Copyright (c) 2022, 2023, Hopsworks and/or its affiliates.
 
    This program is free software; you can redistribute it and/or modify
    it under the terms of the GNU General Public License, version 2.0,
@@ -42,6 +43,8 @@ public class Reconnect2Test extends AbstractClusterJTest {
 
     @Override
     public void localSetUp() {
+        closeSession();
+        closeAllExistingSessionFactories();
         createSessionFactory();
         session = sessionFactory.getSession();
         // delete all rows in AutoPKInt

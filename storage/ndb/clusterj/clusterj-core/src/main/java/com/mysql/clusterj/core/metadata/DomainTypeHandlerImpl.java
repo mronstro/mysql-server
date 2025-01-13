@@ -1,5 +1,6 @@
 /*
    Copyright (c) 2010, 2024, Oracle and/or its affiliates.
+   Copyright (c) 2020, 2023, Hopsworks and/or its affiliates.
 
    This program is free software; you can redistribute it and/or modify
    it under the terms of the GNU General Public License, version 2.0,
@@ -65,10 +66,6 @@ import java.util.Map;
  */
 public class DomainTypeHandlerImpl<T> extends AbstractDomainTypeHandlerImpl<T> {
 
-    public interface Finalizable {
-        void finalize() throws Throwable;
-    }
-
     /** The domain class. */
     Class<T> cls;
 
@@ -125,7 +122,7 @@ public class DomainTypeHandlerImpl<T> extends AbstractDomainTypeHandlerImpl<T> {
                 throw new ClusterJUserException(local.message(
                         "ERR_Not_Persistence_Capable_Type", name));
             }
-            proxyInterfaces = new Class<?>[] {cls, Finalizable.class};
+            proxyInterfaces = new Class<?>[] {cls};
             // Get the table name from Persistence Capable annotation
             persistenceCapable = cls.getAnnotation(PersistenceCapable.class);
             if (persistenceCapable == null) {

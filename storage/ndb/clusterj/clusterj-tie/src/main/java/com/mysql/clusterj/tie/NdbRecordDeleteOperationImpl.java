@@ -1,5 +1,6 @@
 /*
  *  Copyright (c) 2012, 2024, Oracle and/or its affiliates.
+ *  Copyright (c) 2020, 2023, Hopsworks and/or its affiliates.
  *
  *  This program is free software; you can redistribute it and/or modify
  *  it under the terms of the GNU General Public License, version 2.0,
@@ -35,7 +36,7 @@ public class NdbRecordDeleteOperationImpl extends NdbRecordOperationImpl {
     public NdbRecordDeleteOperationImpl(
             ClusterTransactionImpl clusterTransaction, Table storeTable) {
         super(clusterTransaction, storeTable);
-        this.ndbRecordKeys = clusterTransaction.getCachedNdbRecordImpl(storeTable);
+        this.ndbRecordKeys = clusterTransaction.getCachedNdbRecordImpl(clusterTransaction.db, storeTable);
         this.keyBufferSize = ndbRecordKeys.getBufferSize();
         this.numberOfColumns = ndbRecordKeys.getNumberOfColumns();
         resetMask();

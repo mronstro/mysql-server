@@ -1,5 +1,6 @@
 /*
    Copyright (c) 2010, 2024, Oracle and/or its affiliates.
+   Copyright (c) 2021, 2023, Hopsworks and/or its affiliates.
 
    This program is free software; you can redistribute it and/or modify
    it under the terms of the GNU General Public License, version 2.0,
@@ -198,6 +199,8 @@ public class DomainFieldHandlerImpl extends AbstractDomainFieldHandlerImpl {
                 objectOperationHandlerDelegate = objectOperationHandlerKeyShort;
             } else if (type.equals(byte.class)) {
                 objectOperationHandlerDelegate = objectOperationHandlerKeyByte;
+            } else if (type.equals(java.sql.Date.class)) {
+                objectOperationHandlerDelegate = objectOperationHandlerKeyJavaSqlDate;
             } else {
                 objectOperationHandlerDelegate = objectOperationHandlerUnsupportedType;
                 error(
@@ -366,6 +369,7 @@ public class DomainFieldHandlerImpl extends AbstractDomainFieldHandlerImpl {
                     break;
                 case Char:
                 case Varchar:
+                case Longvarchar:
                     this.objectOperationHandlerDelegate = objectOperationHandlerKeyString;
                     this.type = String.class;
                     break;
@@ -389,6 +393,10 @@ public class DomainFieldHandlerImpl extends AbstractDomainFieldHandlerImpl {
                 case Tinyunsigned:
                     this.objectOperationHandlerDelegate = objectOperationHandlerKeyByte;
                     this.type = byte.class;
+                    break;
+                case Date:
+                    this.objectOperationHandlerDelegate = objectOperationHandlerKeyJavaSqlDate;
+                    this.type = java.sql.Date.class;
                     break;
                 default:
                     error(local.message("ERR_Primary_Column_Type", domainTypeHandler.getName(), name, this.storeColumnType));

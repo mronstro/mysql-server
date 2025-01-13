@@ -1,5 +1,6 @@
 /*
    Copyright (c) 2010, 2024, Oracle and/or its affiliates.
+   Copyright (c) 2021, 2023, Hopsworks and/or its affiliates.
 
    This program is free software; you can redistribute it and/or modify
    it under the terms of the GNU General Public License, version 2.0,
@@ -1584,7 +1585,7 @@ public abstract class AbstractDomainFieldHandlerImpl implements DomainFieldHandl
 
     };
 
-    protected static ObjectOperationHandler objectOperationHandlerJavaSqlDate = new ObjectOperationHandler() {
+    protected abstract static class ObjectOperationHandlerJavaSqlDate implements ObjectOperationHandler {
 
         public boolean isPrimitive() {
             return false;
@@ -1618,10 +1619,6 @@ public abstract class AbstractDomainFieldHandlerImpl implements DomainFieldHandl
             }
         }
 
-        public String handler() {
-            return "object java.sql.Date";
-        }
-
         public void objectSetValue(AbstractDomainFieldHandlerImpl fmd, ResultData rs, ValueHandler handler) {
             try {
                 handler.setJavaSqlDate(fmd.fieldNumber, new Date(rs.getLong(fmd.storeColumn)));
@@ -1646,12 +1643,6 @@ public abstract class AbstractDomainFieldHandlerImpl implements DomainFieldHandl
             return true;
         }
 
-        public void partitionKeySetPart(AbstractDomainFieldHandlerImpl fmd,
-                PartitionKey partitionKey, ValueHandler keyValueHandler) {
-            throw new ClusterJFatalInternalException(
-                    local.message("ERR_Operation_Not_Supported","partitionKeySetPart", "non-key fields"));
-        }
-
         public Object getValue(QueryExecutionContext context, String index) {
             return context.getJavaSqlDate(index);
         }
@@ -1664,6 +1655,42 @@ public abstract class AbstractDomainFieldHandlerImpl implements DomainFieldHandl
             handler.setJavaSqlDate(fmd.fieldNumber, (java.sql.Date)value);
         }
 
+    };
+
+    protected static ObjectOperationHandler objectOperationHandlerJavaSqlDate = new ObjectOperationHandlerJavaSqlDate() {
+        public String handler() {
+            return "object java.sql.Date";
+        }
+        public void operationSetValue(AbstractDomainFieldHandlerImpl fmd, ValueHandler handler, Operation op) {
+            if (handler.isNull(fmd.fieldNumber)) {
+                op.setNull(fmd.storeColumn);
+            } else {
+                op.setLong(fmd.storeColumn, (handler.getJavaSqlDate(fmd.fieldNumber)).getTime());
+            }
+        }
+        public void partitionKeySetPart(AbstractDomainFieldHandlerImpl fmd,
+                PartitionKey partitionKey, ValueHandler keyValueHandler) {
+            throw new ClusterJFatalInternalException(
+                    local.message("ERR_Operation_Not_Supported","partitionKeySetPart", "non-key fields"));
+        }
+    };
+    protected static ObjectOperationHandler objectOperationHandlerKeyJavaSqlDate = new ObjectOperationHandlerJavaSqlDate() {
+
+        public String handler() {
+            return "key java.sql.Date";
+        }
+
+        public void operationSetValue(AbstractDomainFieldHandlerImpl fmd, ValueHandler handler, Operation op) {
+            if (logger.isDetailEnabled()) {
+                logger.detail("Column " + fmd.columnName + " set to value " + handler.getLong(fmd.fieldNumber));
+            }
+            op.equalLong(fmd.storeColumn,(handler.getJavaSqlDate(fmd.fieldNumber)).getTime());
+        }
+
+        public void partitionKeySetPart(AbstractDomainFieldHandlerImpl fmd,
+                PartitionKey partitionKey, ValueHandler keyValueHandler) {
+            partitionKey.addLongKey(fmd.storeColumn, (keyValueHandler.getJavaSqlDate(fmd.fieldNumber)).getTime());
+        }
     };
 
     protected static ObjectOperationHandler objectOperationHandlerJavaSqlTime = new ObjectOperationHandler() {

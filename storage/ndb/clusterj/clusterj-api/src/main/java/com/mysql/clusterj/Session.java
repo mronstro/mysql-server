@@ -1,5 +1,6 @@
 /*
    Copyright (c) 2010, 2024, Oracle and/or its affiliates.
+   Copyright (c) 2020, 2023, Hopsworks and/or its affiliates.
 
    This program is free software; you can redistribute it and/or modify
    it under the terms of the GNU General Public License, version 2.0,
@@ -191,9 +192,23 @@ public interface Session  extends AutoCloseable {
     Transaction currentTransaction();
 
     /** Close this session.
-     * 
+     *  The closeCache call can cache the session for later reuse in the SessionFactory.
+     *  close will never do this.
+     *
+     * closeCache is an add-on by Logical Clocks
+     *
+     * If dropCache is set to true, the cached instances will
+     * be droppped as part of the close call, otherwise they
+     * are kept in the cache and can be reused when the
+     * object is re-opened.
+     * dropCache should normally be set to false for optimal performance.
+     * But if one expects the cost of the extra memory to be a burden one
+     * has the option of releasing the memory attached to those data objects.
+     * closeCache() is equal to closeCache(false).
      */
     void close();
+    void closeCache(boolean dropCache);
+    void closeCache();
 
     /** Is this session closed?
      *
@@ -253,11 +268,19 @@ public interface Session  extends AutoCloseable {
     /** Release resources associated with an instance. The instance must be a domain object obtained via
      * session.newInstance(T.class), find(T.class), or query; or Iterable<T>, or array T[].
      * Resources released can include direct buffers used to hold instance data.
-     * Released resources may be returned to a pool.
+     * Released resources may be returned to a pool if releaseCache is used.
+     * releaseCache is an add-on by Logical Clocks
      * @param obj a domain object of type T, an Iterable<T>, or array T[]
      * @return the input parameter
      * @throws ClusterJUserException if the instance is not a domain object T, Iterable<T>, or array T[],
      * or if the object is used after calling this method.
      */
     <T> T release(T obj);
+    <T> T releaseCache(T obj, Class<?> cls);
+
+    /** Release all cached instances of a certain type or all types.
+     *  Added by Logical Clocks.
+     */
+    <T> void dropInstanceCache(Class<?> type);
+    void dropInstanceCache();
 }

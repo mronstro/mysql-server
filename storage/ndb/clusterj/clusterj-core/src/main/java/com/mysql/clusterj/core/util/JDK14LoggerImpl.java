@@ -1,5 +1,6 @@
 /*
    Copyright (c) 2010, 2024, Oracle and/or its affiliates.
+   Copyright (c) 2020, 2023, Hopsworks and/or its affiliates.
    Use is subject to license terms.
 
    This program is free software; you can redistribute it and/or modify
@@ -54,66 +55,23 @@ public class JDK14LoggerImpl implements Logger {
     }
 
     public void detail(String message) {
-        Throwable t = new Throwable();
-        StackTraceElement[] stack = t.getStackTrace();
-        StackTraceElement element = stack[1];
-        String className = element.getClassName();
-        String methodName = element.getMethodName();
-        delegate.logp(Level.FINEST, className, methodName, message);
     }
 
     public void debug(String message) {
-        Throwable t = new Throwable();
-        StackTraceElement[] stack = t.getStackTrace();
-        StackTraceElement element = stack[1];
-        String className = element.getClassName();
-        String methodName = element.getMethodName();
-        delegate.logp(Level.FINER, className, methodName, message);
     }
 
     public void trace(String message) {
-        Throwable t = new Throwable();
-        StackTraceElement[] stack = t.getStackTrace();
-        StackTraceElement element = stack[1];
-        String className = element.getClassName();
-        String methodName = element.getMethodName();
-        delegate.logp(Level.FINE, className, methodName, message);
     }
 
     public void info(String message) {
-        Throwable t = new Throwable();
-        StackTraceElement[] stack = t.getStackTrace();
-        StackTraceElement element = stack[1];
-        String className = element.getClassName();
-        String methodName = element.getMethodName();
-        delegate.logp(Level.INFO, className, methodName, message);
     }
 
     public void warn(String message) {
-        Throwable t = new Throwable();
-        StackTraceElement[] stack = t.getStackTrace();
-        StackTraceElement element = stack[1];
-        String className = element.getClassName();
-        String methodName = element.getMethodName();
-        delegate.logp(Level.WARNING, className, methodName, message);
     }
 
     public void error(String message) {
-        Throwable t = new Throwable();
-        StackTraceElement[] stack = t.getStackTrace();
-        StackTraceElement element = stack[1];
-        String className = element.getClassName();
-        String methodName = element.getMethodName();
-        delegate.logp(Level.SEVERE, className, methodName, message);
     }
 
     public void fatal(String message) {
-        Throwable t = new Throwable();
-        StackTraceElement[] stack = t.getStackTrace();
-        StackTraceElement element = stack[1];
-        String className = element.getClassName();
-        String methodName = element.getMethodName();
-        delegate.logp(Level.SEVERE, className, methodName, message);
     }
-
 }

@@ -1,4 +1,5 @@
 # Copyright (c) 2010, 2024, Oracle and/or its affiliates.
+# Copyright (c) 2020, 2023, Hopsworks and/or its affiliates.
 #
 # This program is free software; you can redistribute it and/or modify
 # it under the terms of the GNU General Public License, version 2.0,
@@ -30,16 +31,19 @@ SET ( BROKEN_JAVAC
   ${CMAKE_CURRENT_SOURCE_DIR}/src/main/java/com/mysql/clusterj/core/query/*.java
   ${CMAKE_CURRENT_SOURCE_DIR}/src/main/java/com/mysql/clusterj/core/spi/*.java
   ${CMAKE_CURRENT_SOURCE_DIR}/src/main/java/com/mysql/clusterj/core/store/*.java
+  ${CMAKE_CURRENT_SOURCE_DIR}/src/main/java/com/mysql/clusterj/core/dtocache/*.java
   ${CMAKE_CURRENT_SOURCE_DIR}/src/main/java/com/mysql/clusterj/core/util/*.java)
 
 SET(JAVA_SOURCES
   ${CLUSTERJ_CORE_PREFIX}/CacheManager.java
   ${CLUSTERJ_CORE_PREFIX}/SessionFactoryImpl.java
   ${CLUSTERJ_CORE_PREFIX}/SessionFactoryServiceImpl.java
+  ${CLUSTERJ_CORE_PREFIX}/SessionCache.java
   ${CLUSTERJ_CORE_PREFIX}/SessionImpl.java
   ${CLUSTERJ_CORE_PREFIX}/StateManager.java
   ${CLUSTERJ_CORE_PREFIX}/StoreManager.java
   ${CLUSTERJ_CORE_PREFIX}/TransactionImpl.java
+  ${CLUSTERJ_CORE_PREFIX}/dtocache/DTOCache.java
   ${CLUSTERJ_CORE_PREFIX}/metadata/AbstractDomainFieldHandlerImpl.java
   ${CLUSTERJ_CORE_PREFIX}/metadata/AbstractDomainTypeHandlerImpl.java
   ${CLUSTERJ_CORE_PREFIX}/metadata/DomainFieldHandlerImpl.java

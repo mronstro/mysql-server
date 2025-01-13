@@ -1,5 +1,6 @@
 /*
    Copyright (c) 2017, 2024, Oracle and/or its affiliates.
+   Copyright (c) 2022, 2023, Hopsworks and/or its affiliates.
 
    This program is free software; you can redistribute it and/or modify
    it under the terms of the GNU General Public License, version 2.0,
@@ -41,6 +42,7 @@ public class RecvThreadCPUTest extends AbstractClusterJTest {
     @Override
     protected void localSetUp() {
         // close any existing session factory
+        closeSession();
         closeAllExistingSessionFactories();
         // checking if CPU set is supported in the system
         if (bindCPUsupport != BindCpuSupport.UNDEFINED) {

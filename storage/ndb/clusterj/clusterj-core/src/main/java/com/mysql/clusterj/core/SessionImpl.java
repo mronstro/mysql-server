@@ -1,5 +1,6 @@
 /*
    Copyright (c) 2009, 2024, Oracle and/or its affiliates.
+   Copyright (c) 2020, 2023, Hopsworks and/or its affiliates.
 
    This program is free software; you can redistribute it and/or modify
    it under the terms of the GNU General Public License, version 2.0,
@@ -45,6 +46,7 @@ import com.mysql.clusterj.core.query.QueryBuilderImpl;
 import com.mysql.clusterj.core.query.QueryImpl;
 
 import com.mysql.clusterj.core.spi.SessionSPI;
+import com.mysql.clusterj.core.dtocache.DTOCache;
 
 import com.mysql.clusterj.core.store.ClusterTransaction;
 import com.mysql.clusterj.core.store.Db;
@@ -141,15 +143,54 @@ public class SessionImpl implements SessionSPI, CacheManager, StoreManager {
     /** The lock mode for read operations */
     private LockMode lockmode = LockMode.READ_COMMITTED;
 
+    /**
+     * A cache for Data Transport Objects used by ClusterJ, retrieved by
+     * newInstance and put back into cache by release call.
+     */
+    private DTOCache dtoCache;
+
+    boolean is_cached;
+
+    /**
+     * We need some support for O(1) handling of LRU list of Session objects
+     * also in the presence of multiple database Session objects.
+     */
+    SessionImpl next_lru_list;
+    SessionImpl prev_lru_list;
+
+    SessionImpl getNextLruList() {
+        return next_lru_list;
+    }
+    SessionImpl getPrevLruList() {
+        return prev_lru_list;
+    }
+    void setNextLruList(SessionImpl session) {
+        next_lru_list = session;
+    }
+    void setPrevLruList(SessionImpl session) {
+        prev_lru_list = session;
+    }
+
+    String getDatabaseName() {
+        return db.getName();
+    }
+
+    boolean isDefaultDatabase() {
+        return db.isDefaultDatabase();
+    }
+
     /** Create a SessionImpl with factory, properties, Db, and dictionary
      */
-    SessionImpl(SessionFactoryImpl factory, Map properties, Db db, Dictionary dictionary) {
+    SessionImpl(SessionFactoryImpl factory, Map properties, Db db, Dictionary dictionary,
+                int max_cached_instances) {
+        this.is_cached = false;
         this.factory = factory;
         this.db = db;
         this.dictionary = dictionary;
         this.properties = properties;
         transactionImpl = new TransactionImpl(this);
         transactionState = transactionStateNotActive;
+        dtoCache = new DTOCache(this, max_cached_instances);
     }
 
     /** Create a query from a query definition.
@@ -299,8 +340,19 @@ public class SessionImpl implements SessionSPI, CacheManager, StoreManager {
      * @return a new instance that can be used with makePersistent
      */
     public <T> T newInstance(Class<T> cls) {
-        assertNotClosed();
-        return factory.newInstance(cls, dictionary, db);
+        try {
+            assertNotClosed();
+            T instance = dtoCache.get(cls);
+            if (instance != null) {
+                return instance;
+            }
+            instance = factory.newInstance(cls, dictionary, db);
+            dtoCache.insert(instance, cls);
+            return instance;
+        } catch (ClusterJDatastoreException cjde) {
+            checkConnection(cjde);
+            throw cjde;
+        }
     }
 
     /** Create an instance of a class to be persisted and set the primary key.
@@ -311,9 +363,14 @@ public class SessionImpl implements SessionSPI, CacheManager, StoreManager {
      */
     public <T> T newInstance(Class<T> cls, Object key) {
         assertNotClosed();
+        T instance = null;
+        instance = dtoCache.get(cls);
         DomainTypeHandler<T> domainTypeHandler = getDomainTypeHandler(cls);
-        T instance = factory.newInstance(cls, dictionary, db);
+        if (instance == null) {
+            instance = factory.newInstance(cls, dictionary, db);
+        }
         domainTypeHandler.objectSetKeys(key, instance);
+        dtoCache.insert(instance, cls);
         return instance;
     }
 
@@ -614,7 +671,7 @@ public class SessionImpl implements SessionSPI, CacheManager, StoreManager {
         int count = 0;
         try {
             op = clusterTransaction.getTableScanOperationLockModeExclusiveScanFlagKeyInfo(storeTable);
-            count = deletePersistentAll(op, true, Long.MAX_VALUE);
+            count = deletePersistentAll(op, true, 0, Long.MAX_VALUE);
         } catch (ClusterJException ex) {
             failAutoTransaction();
             // TODO add table name to the error message
@@ -632,25 +689,40 @@ public class SessionImpl implements SessionSPI, CacheManager, StoreManager {
      * @param limit maximum number of instances to be deleted
      * @return the number of instances deleted
      */
-    public int deletePersistentAll(ScanOperation op, boolean abort, long limit) {
+    public int deletePersistentAll(ScanOperation op,
+                                   boolean abort,
+                                   long skip,
+                                   long limit) {
         int cacheCount = 0;
         int count = 0;
+        int delete_count = 0;
         boolean done = false;
         boolean fetch = true;
         // cannot use early autocommit optimization here
         clusterTransaction.setAutocommit(false);
+        // check that limit is not zero, if so we're done
+        assert(limit > 0);
         // execute the operation
         clusterTransaction.executeNoCommit(true, true);
         while (!done ) {
             int result = op.nextResult(fetch);
             switch (result) {
                 case RESULT_READY:
-                    if(count < limit) {
-                      op.deleteCurrentTuple();
-                      ++count;
-                      ++cacheCount;
+                    if (skip <= 0 || count >= skip) {
+                        op.deleteCurrentTuple();
+                        ++cacheCount;
+                        ++delete_count;
+                        fetch = false;
+                        if (delete_count == limit) {
+                            done = true;
+                            if (cacheCount != 0) {
+                                clusterTransaction.executeNoCommit(abort, true);
+                            }
+                            cacheCount = 0;
+                            op.close();
+                        }
                     }
-                    fetch = false;
+                    ++count;
                     break;
                 case SCAN_FINISHED:
                     done = true;
@@ -660,17 +732,18 @@ public class SessionImpl implements SessionSPI, CacheManager, StoreManager {
                     op.close();
                     break;
                 case CACHE_EMPTY:
-                    clusterTransaction.executeNoCommit(abort, true);
+                    if (cacheCount != 0) {
+                        clusterTransaction.executeNoCommit(abort, true);
+                    }
                     cacheCount = 0;
                     fetch = true;
-                    done = (count == limit);
                     break;
                 default:
                     throw new ClusterJException(
                             local.message("ERR_Next_Result_Illegal", result));
             }
         }
-        return count;
+        return delete_count;
     }
 
     /** Select a single row from the database. Only the fields requested
@@ -836,16 +909,47 @@ public class SessionImpl implements SessionSPI, CacheManager, StoreManager {
     }
 
     /** Close this session and deallocate all resources.
+     * close deallocates it always, closeCache can cache the Session
+     * object in the SessionFactory.
+     *
+     *  We give the SessionFactory object the chance to store
+     *  Session object in its Session cache and the SessionFactory
+     *  will call close to perform the actual close of the
+     *  Session object when it doesn't need any more cached
+     *  Session objects.
      * 
      */
-    public void close() {
-        if (clusterTransaction != null) {
-            clusterTransaction.close();
-            clusterTransaction = null;
+    public void closeCache() {
+        closeCache(false);
+    }
+
+    public void closeCache(boolean dropCache) {
+        if (dropCache) {
+            dtoCache.drop();
         }
-        if (db != null) {
-            db.close();
-            db = null;
+
+        if (factory.isSessionCacheEnabled()) {
+            factory.storeCachedSession(this, db.getName());
+        } else {
+            close();
+        }
+    }
+
+    public void setCached(boolean is_cached_val) {
+        is_cached = is_cached_val;
+    }
+
+    public void close() {
+        if (!is_cached) {
+            dropInstanceCache();
+            if (clusterTransaction != null) {
+                clusterTransaction.close();
+                clusterTransaction = null;
+            }
+            if (db != null) {
+                 db.close();
+                db = null;
+            }
         }
     }
 
@@ -1511,27 +1615,32 @@ public class SessionImpl implements SessionSPI, CacheManager, StoreManager {
     }
 
     public void setPartitionKey(Class<?> domainClass, Object key) {
-        assertNotClosed();
-        DomainTypeHandler<?> domainTypeHandler = getDomainTypeHandler(domainClass);
-        String tableName = domainTypeHandler.getTableName();
-        // if transaction is enlisted, throw a user exception
-        if (isEnlisted()) {
-            throw new ClusterJUserException(
-                    local.message("ERR_Set_Partition_Key_After_Enlistment", tableName));
-        }
-        // if a partition key has already been set, throw a user exception
-        if (this.partitionKey != null) {
-            throw new ClusterJUserException(
-                    local.message("ERR_Set_Partition_Key_Twice", tableName));
-        }
-        ValueHandler handler = domainTypeHandler.createKeyValueHandler(key, db);
-        this.partitionKey= domainTypeHandler.createPartitionKey(handler);
-        // if a transaction has already begun, tell the cluster transaction about the key
-        if (clusterTransaction != null) {
-            clusterTransaction.setPartitionKey(partitionKey);
-        }
-        // we are done with this handler; the partition key has all of its information
-        handler.release();
+         try{
+              assertNotClosed();
+              DomainTypeHandler<?> domainTypeHandler = getDomainTypeHandler(domainClass);
+              String tableName = domainTypeHandler.getTableName();
+              // if transaction is enlisted, throw a user exception
+              if (isEnlisted()) {
+                  throw new ClusterJUserException(
+                          local.message("ERR_Set_Partition_Key_After_Enlistment", tableName));
+              }
+              // if a partition key has already been set, throw a user exception
+              if (this.partitionKey != null) {
+                  throw new ClusterJUserException(
+                          local.message("ERR_Set_Partition_Key_Twice", tableName));
+              }
+              ValueHandler handler = domainTypeHandler.createKeyValueHandler(key, db);
+              this.partitionKey= domainTypeHandler.createPartitionKey(handler);
+              // if a transaction has already begun, tell the cluster transaction about the key
+              if (clusterTransaction != null) {
+                  clusterTransaction.setPartitionKey(partitionKey);
+              }
+              // we are done with this handler; the partition key has all of its information
+              handler.release();
+         } catch (ClusterJDatastoreException cjde) {
+             checkConnection(cjde);
+             throw cjde;
+         }
     }
 
     /** Mark the field in the instance as modified so it is flushed.
@@ -1593,7 +1702,9 @@ public class SessionImpl implements SessionSPI, CacheManager, StoreManager {
      */
     public String unloadSchema(Class<?> cls) {
         assertNotClosed();
-        return factory.unloadSchema(cls, dictionary);
+        //drop all caches as they are invalid now due to change in schema ID
+        dropInstanceCache();
+        return factory.unloadSchema(cls, dictionary, db.getName(), db.isDefaultDatabase());
     }
 
     /** Release resources associated with an instance. The instance must be a domain object obtained via
@@ -1604,6 +1715,10 @@ public class SessionImpl implements SessionSPI, CacheManager, StoreManager {
      * or if the object is used after calling this method.
      */
     public <T> T release(T param) {
+        return release(param, Object.class, false);
+    }
+
+    private <T> T release(T param, Class<?> cls, boolean is_caching_allowed) {
         if (param == null) {
             throw new ClusterJUserException(local.message("ERR_Release_Parameter"));
         }
@@ -1611,39 +1726,53 @@ public class SessionImpl implements SessionSPI, CacheManager, StoreManager {
         if (Iterable.class.isAssignableFrom(param.getClass())) {
             Iterable<?> instances = (Iterable<?>)param;
             for (Object instance:instances) {
-                release(instance);
+                release(instance, cls, is_caching_allowed);
             }
         } else
         // is the parameter an array?
         if (param.getClass().isArray()) {
             Object[] instances = (Object[])param;
             for (Object instance:instances) {
-                release(instance);
+                release(instance, cls, is_caching_allowed);
             }
         } else {
             assertNotClosed();
             // is the parameter a Dynamic Object?
             if (DynamicObject.class.isAssignableFrom(param.getClass())) {
-                DynamicObject dynamicObject = (DynamicObject)param;
-                DynamicObjectDelegate delegate = dynamicObject.delegate();
-                if (delegate != null) {
-                    delegate.release();
-                }
-            // it must be a Proxy with a clusterj InvocationHandler
-            } else {
-                try {
-                    InvocationHandler handler = Proxy.getInvocationHandler(param);
-                    if (!ValueHandler.class.isAssignableFrom(handler.getClass())) {
-                        throw new ClusterJUserException(local.message("ERR_Release_Parameter"));
+                if (is_caching_allowed) {
+                    dtoCache.put(param, cls);
+                } else {
+                    dtoCache.remove(param);
+                    DynamicObject dynamicObject = (DynamicObject)param;
+                    DynamicObjectDelegate delegate = dynamicObject.delegate();
+                    if (delegate != null) {
+                        delegate.release();
                     }
-                    ValueHandler valueHandler = (ValueHandler)handler;
-                    valueHandler.release();
-                } catch (Throwable t) {
-                    throw new ClusterJUserException(local.message("ERR_Release_Parameter"), t);
+                }
+            } else {
+                // it must be a Proxy with a clusterj InvocationHandler
+                if (is_caching_allowed) {
+                    dtoCache.put(param, cls);
+                } else {
+                    dtoCache.remove(param);
+                    try {
+                        InvocationHandler handler = Proxy.getInvocationHandler(param);
+                        if (!ValueHandler.class.isAssignableFrom(handler.getClass())) {
+                            throw new ClusterJUserException(local.message("ERR_Release_Parameter"));
+                        }
+                        ValueHandler valueHandler = (ValueHandler)handler;
+                        valueHandler.release();
+                    } catch (Throwable t) {
+                        throw new ClusterJUserException(local.message("ERR_Release_Parameter"), t);
+                    }
                 }
             }
         }
         return param;
+    }
+
+    public <T> T releaseCache(T param, Class<?> cls) {
+        return release(param, cls, true);
     }
 
     /** Check connectivity to the cluster. If connection was lost notify SessionFactory
@@ -1658,4 +1787,11 @@ public class SessionImpl implements SessionSPI, CacheManager, StoreManager {
         }
     }
 
+    public <T> void dropInstanceCache(Class<?> type) {
+        dtoCache.drop(type);
+    }
+
+    public void dropInstanceCache() {
+        dtoCache.drop();
+    }
 }

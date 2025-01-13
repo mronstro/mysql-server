@@ -1,5 +1,6 @@
 /*
    Copyright (c) 2019, 2024, Oracle and/or its affiliates.
+   Copyright (c) 2021, 2023, Hopsworks and/or its affiliates.
 
    This program is free software; you can redistribute it and/or modify
    it under the terms of the GNU General Public License, version 2.0,
@@ -51,15 +52,24 @@ public class FindByPrimaryKeyErrorHandlingTest
         }
         createEmployeeInstances(NUMBER_TO_INSERT);
         session.makePersistentAll(employees);
-        addTearDownClasses(Employee.class);
     }
 
     public void test() {
-        testErrorHandling();
+        try {
+            testErrorHandling();
+        } finally {
+            session = sessionFactory.getSession();
+            session.deletePersistentAll(Employee.class);
+        }
         failOnError();
     }
 
     private void testErrorHandling() {
+        closeSession();
+        closeAllExistingSessionFactories();
+        sessionFactory = null;
+        createSessionFactory();
+
         try (MgmClient mgmClient = new MgmClient(props)) {
             // Insert error to simulate a temporary error while reading
             if (!mgmClient.insertErrorOnAllDataNodes(5098)) {
@@ -78,7 +88,7 @@ public class FindByPrimaryKeyErrorHandlingTest
             } catch (ClusterJDatastoreException cjde) {
                 // Verify that the expected error has been caught
                 verifyException("Simulating temporary read error in session.find()",
-                        cjde, ".*Error code: 1,218.*");
+                        cjde, ".*Error code: 1.*218.*");
             } catch (Exception ex) {
                 // Any other exception caught is invalid
                 error("Caught exception : " + ex.getMessage());

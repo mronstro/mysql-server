@@ -1,5 +1,6 @@
 /*
    Copyright (c) 2012, 2024, Oracle and/or its affiliates.
+   Copyright (c) 2022, 2023, Hopsworks and/or its affiliates.
 
    This program is free software; you can redistribute it and/or modify
    it under the terms of the GNU General Public License, version 2.0,
@@ -62,6 +63,7 @@ import com.mysql.ndbjtie.ndbapi.NdbDictionary.IndexConst;
 import com.mysql.ndbjtie.ndbapi.NdbDictionary.RecordSpecification;
 import com.mysql.ndbjtie.ndbapi.NdbDictionary.RecordSpecificationArray;
 import com.mysql.ndbjtie.ndbapi.NdbDictionary.TableConst;
+import com.mysql.ndbjtie.ndbapi.Ndb_cluster_connection;
 
 /**
  * Wrapper around an NdbRecord. Operations may use one or two instances.
@@ -204,12 +206,15 @@ public class NdbRecordImpl {
     /** The set of projected column names */
     private Set<String> projectedColumnSet;
 
+    private final  ClusterConnectionImpl clusterConnectionImpl;
+
     /** Constructor for table operations. The NdbRecord has entries just for
      * projected columns.
      * @param storeTable the store table
      * @param ndbDictionary the ndb dictionary
      */
-    protected NdbRecordImpl(Table storeTable, Dictionary ndbDictionary) {
+    protected NdbRecordImpl(Table storeTable, Dictionary ndbDictionary,
+                            ClusterConnectionImpl clusterConnectionImpl) {
         this.ndbDictionary = ndbDictionary;
         this.tableConst = getNdbTable(storeTable.getName());
         this.name = storeTable.getKey();
@@ -221,6 +226,7 @@ public class NdbRecordImpl {
         this.nullbitByteOffset = new int[numberOfTableColumns];
         this.storeColumns = new Column[numberOfTableColumns];
         this.projectedColumnSet = new TreeSet<String>();
+        this.clusterConnectionImpl = clusterConnectionImpl;
         for (String projectedColumnName: storeTable.getProjectedColumnNames()) {
             this.projectedColumnSet.add(projectedColumnName);
         }
@@ -245,7 +251,8 @@ public class NdbRecordImpl {
      * @param storeTable the store table
      * @param ndbDictionary the ndb dictionary
      */
-    protected NdbRecordImpl(Index storeIndex, Table storeTable, Dictionary ndbDictionary) {
+    protected NdbRecordImpl(Index storeIndex, Table storeTable, Dictionary ndbDictionary,
+                            ClusterConnectionImpl clusterConnectionImpl) {
         this.ndbDictionary = ndbDictionary;
         this.tableConst = getNdbTable(storeTable.getName());
         this.indexConst = getNdbIndex(storeIndex.getInternalName(), tableConst.getName());
@@ -259,6 +266,7 @@ public class NdbRecordImpl {
         this.nullbitByteOffset = new int[numberOfTableColumns];
         this.storeColumns = new Column[numberOfTableColumns];
         this.projectedColumnSet = new TreeSet<String>();
+        this.clusterConnectionImpl = clusterConnectionImpl;
         for (String projectedColumnName: storeTable.getProjectedColumnNames()) {
             this.projectedColumnSet.add(projectedColumnName);
         }
@@ -319,7 +327,12 @@ public class NdbRecordImpl {
 
     /** Return the buffer to the buffer pool */
     protected void returnBuffer(ByteBuffer buffer) {
-        bufferPool.returnBuffer(buffer);
+        // bufferPool is set to null when unload schema is called.
+        // after unloading the schema if the user tries to release
+        // the NdbRecord then the user will get NPE
+        if (bufferPool!=null) {
+            bufferPool.returnBuffer(buffer);
+        }
     }
 
     /** Check the NdbRecord buffer guard */
@@ -347,6 +360,11 @@ public class NdbRecordImpl {
      */
     protected void initializeBuffer(ByteBuffer buffer) {
         initializeBuffer(buffer, true);
+    }
+
+    public boolean isNullable(ByteBuffer buffer, Column storeColumn) {
+        int columnId = storeColumn.getColumnId();
+        return storeColumn.getNullable();
     }
 
     public int setNull(ByteBuffer buffer, Column storeColumn) {
@@ -1069,16 +1087,22 @@ public class NdbRecordImpl {
         return numberOfTableColumns;
     }
 
+
+    // see comments in unloadSchema method in ClusterConnectionImpl.java   
+    protected void finalize() {
+        clusterConnectionImpl.release(this);
+    }
+
     protected void releaseNdbRecord() {
         if (ndbRecord != null) {
-            if (logger.isDebugEnabled())logger.debug("Releasing NdbRecord for " + tableConst.getName());
+            // Logging throws NPE when the corresponding cluster connection has already been closed
+            //if (logger.isInfoEnabled())logger.info("Releasing NdbRecord for " + tableConst.getName());             
             ndbDictionary.releaseRecord(ndbRecord);
             ndbRecord = null;
             // release the buffer pool; pooled byte buffers will be garbage collected
             this.bufferPool = null;
         }
     }
-
     protected void assertValid() {
         if (ndbRecord == null) {
             throw new ClusterJUserException(local.message("ERR_NdbRecord_was_released"));

@@ -1,5 +1,6 @@
 /*
    Copyright (c) 2015, 2024, Oracle and/or its affiliates.
+   Copyright (c) 2022, 2023, Hopsworks and/or its affiliates.
 
    This program is free software; you can redistribute it and/or modify
    it under the terms of the GNU General Public License, version 2.0,
@@ -25,6 +26,7 @@
 
 package testsuite.clusterj;
 
+import com.mysql.clusterj.Constants;
 import com.mysql.clusterj.DynamicObject;
 import com.mysql.clusterj.ClusterJUserException;
 import com.mysql.clusterj.Query;
@@ -35,6 +37,8 @@ import com.mysql.clusterj.query.QueryBuilder;
 import com.mysql.clusterj.query.QueryDomainType;
 import java.util.ArrayList;
 import java.util.List;
+import java.util.Properties;
+
 import testsuite.clusterj.model.Employee;
 
 /** Test session.release(Object)
@@ -71,9 +75,19 @@ public class ReleaseTest extends AbstractClusterJModelTest {
         emp.setAge(id);
         return emp;
     }
-    
+    @Override
+    protected Properties modifyProperties() {
+        props.setProperty(Constants.PROPERTY_CLUSTER_MAX_CACHED_INSTANCES, "0");
+        props.setProperty(Constants.PROPERTY_CLUSTER_WARMUP_CACHED_SESSIONS, "0");
+        props.setProperty(Constants.PROPERTY_CLUSTER_MAX_CACHED_SESSIONS, "0");
+        return props;
+    }
+
     @Override
     public void localSetUp() {
+        closeSession();
+        closeAllExistingSessionFactories();
+        sessionFactory = null;
         createSessionFactory();
         session = sessionFactory.getSession();
         session.deletePersistentAll(Employee.class);
